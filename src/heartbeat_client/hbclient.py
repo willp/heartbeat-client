@@ -1,10 +1,12 @@
+#!/usr/bin/python3 -u
+
 import socket, time
 import json
 
 
 class HbDefaults:
     SERVER: str = "hb"
-    PORT: int = 3333
+    PORT: int = 8333
     #
     #
     # drop hb send() calls if called more frequently than this
@@ -118,6 +120,7 @@ class HbClient:
             # Send the UDP packet to the target IP address and port
             try:
                 print(f"Sending to {dest_addr}...")
+                print(f"Payload: {json_bytes}")
                 sock.sendto(json_bytes, dest_addr)
                 was_sent = True
                 self._last_sent_hb = time.time()
@@ -126,3 +129,52 @@ class HbClient:
         #
         time.sleep(self.blocking_delay)
         return was_sent
+
+# ... (Keep your HbDefaults and HbClient class exactly as they are) ...
+
+def main():
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description=f"Heartbeat Client Utility  (sending from: {socket.getfqdn()})")
+
+    # Identity parameters (mapping to HbClient init)
+    parser.add_argument("name", help="App name (part of unique identifier)")
+    parser.add_argument("--task", help="Task name (part of unique identifier)")
+    parser.add_argument("--port", type=int, help="App port (part of unique identifier)")
+    parser.add_argument("--version", help="Version string")
+
+    # Timing and thresholds
+    parser.add_argument("--interval", type=int, default=60, help="Heartbeat interval in seconds")
+    parser.add_argument("--alert-after", type=int, help="Alert threshold in seconds")
+
+    # Server connection
+    parser.add_argument("--server", default=HbDefaults.SERVER, help="UDP Server hostname")
+    parser.add_argument("--serverport", type=int, default=HbDefaults.PORT, help="UDP Server port")
+
+    # Final message
+    parser.add_argument("--final-report", help="Send a final status message and exit")
+
+    args = parser.parse_args()
+
+    # Initialize client using your existing logic
+    client = HbClient(
+        name=args.name,
+        interval=args.interval,
+        alert_after=args.alert_after,
+        task=args.task,
+        version=args.version,
+        port=args.port,
+        servername=args.server,
+        serverport=args.serverport
+    )
+
+    # Send the heartbeat
+    success = client.send(final_report=args.final_report)
+
+    if not success:
+        # Exit with 1 if rate-limited or DNS failed
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
