@@ -1,20 +1,22 @@
 #!/usr/bin/python3 -u
 
+from dataclasses import dataclass
 import socket, time
 import json
 
-
-class HbDefaults:
-    SERVER: str = "hb"
-    PORT: int = 8333
+@dataclass
+class HbConfig:
+    server: str = "hb"
+    serverport: int = 8333
     #
     #
     # drop hb send() calls if called more frequently than this
     MINIMUM_INTERVAL_SEC: int = 30
     DNS_REFRESH_SEC: int = 4 * 60 * 60
-    ALERT_INTERVAL_MULTIPLIER_LOW = 2.25
-    ALERT_INTERVAL_MULTIPLIER_HIGH = 1.25
+    ALERT_INTERVAL_MULTIPLIER_LOW = 2.25   # interval of 1 day or longer
+    ALERT_INTERVAL_MULTIPLIER_HIGH = 1.25  # interval less than one day
 
+default_hb_config = HbConfig()
 
 class HbClient:
     def __init__(
@@ -25,26 +27,28 @@ class HbClient:
         task: str | None = None,
         version: str | None = None,
         port: int | None = None,
-        servername: str = HbDefaults.SERVER,
-        serverport: int = HbDefaults.PORT,
+        config: HbConfig | None = None,
         blocking: bool = True,
+        **kwargs,
     ):
-        self.servername = servername
-        self.serverport = serverport
+        self.cfg = config or default_hb_config
+        self.servername = kwargs.get("servername", self.cfg.server)
+        self.serverport = kwargs.get("serverport", self.cfg.serverport)
+
         self.blocking_delay: float = 0.1 if blocking else 0.0
         self.interval = interval
         if alert_after is None:
             self.alert_after = int(interval * (
-                HbDefaults.ALERT_INTERVAL_MULTIPLIER_LOW
+                self.cfg.ALERT_INTERVAL_MULTIPLIER_LOW
                 if interval < 86400
-                else HbDefaults.ALERT_INTERVAL_MULTIPLIER_HIGH)
+                else self.cfg.ALERT_INTERVAL_MULTIPLIER_HIGH)
             )
         else:
             self.alert_after = alert_after
         self.myhostname = socket.getfqdn()
         self.server_ips: set[str] = set()
         self._last_dns_resolve = 0
-        self._dns_resolve_interval = HbDefaults.DNS_REFRESH_SEC
+        self._dns_resolve_interval = self.cfg.DNS_REFRESH_SEC
         self._update_dns()
 
         # set metadata
@@ -97,7 +101,7 @@ class HbClient:
             ignore_errors=True
         )  # refresh DNS once in a while, ignoring errors
         since_last_hb = time.time() - self._last_sent_hb
-        if since_last_hb < HbDefaults.MINIMUM_INTERVAL_SEC:
+        if since_last_hb < self.cfg.MINIMUM_INTERVAL_SEC:
             return False
         if strict_interval and since_last_hb < self.interval:
             return False
@@ -132,7 +136,7 @@ class HbClient:
 
 # ... (Keep your HbDefaults and HbClient class exactly as they are) ...
 
-def main():
+def _main():
     import argparse
     import sys
 
@@ -149,8 +153,8 @@ def main():
     parser.add_argument("--alert-after", type=int, help="Alert threshold in seconds")
 
     # Server connection
-    parser.add_argument("--server", default=HbDefaults.SERVER, help="UDP Server hostname")
-    parser.add_argument("--serverport", type=int, default=HbDefaults.PORT, help="UDP Server port")
+    parser.add_argument("--server", default=default_hb_config.server, help="UDP Server hostname")
+    parser.add_argument("--serverport", type=int, default=default_hb_config.serverport, help="UDP Server port")
 
     # Final message
     parser.add_argument("--final-report", help="Send a final status message and exit")
@@ -177,4 +181,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    _main()

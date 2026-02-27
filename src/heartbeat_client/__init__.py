@@ -1,1 +1,1 @@
-from .hbclient import HbClient, HbDefaults
+from .hbclient import HbClient, HbConfig
