@@ -8,6 +8,7 @@ import json
 class HbConfig:
     server: str = "hb"
     serverport: int = 8333
+    debug: bool = False
     #
     #
     # drop hb send() calls if called more frequently than this
@@ -129,8 +130,8 @@ class HbClient:
                 dest_addr = (dest_ip, self.serverport)
                 # Send the UDP packet to the target IP address and port
                 try:
-                    print(f"Sending to {dest_addr}...")
-                    print(f"Payload: {json_bytes}")
+                    if self.cfg.debug:
+                        print(f"Sending to {dest_addr}: Payload: {json_bytes}")
                     sock.sendto(json_bytes, dest_addr)
                     was_sent = True
                     self._last_sent_hb = time.time()
@@ -160,6 +161,7 @@ def _main():
     parser.add_argument("--task", help="Task name (part of unique identifier)")
     parser.add_argument("--port", type=int, help="App port (part of unique identifier)")
     parser.add_argument("--version", help="Version string")
+    parser.add_argument("--debug", "-d", action='store_true', default=False, help='show debugging output on STDOUT')
 
     # Timing and thresholds
     parser.add_argument("--interval", type=int, default=60, help="Heartbeat interval in seconds")
@@ -183,7 +185,8 @@ def _main():
         version=args.version,
         port=args.port,
         servername=args.server,
-        serverport=args.serverport
+        serverport=args.serverport,
+        config=HbConfig(debug=args.debug)
     )
 
     # Send the heartbeat
