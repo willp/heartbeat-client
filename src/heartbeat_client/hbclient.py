@@ -13,8 +13,13 @@ class HbConfig:
     # drop hb send() calls if called more frequently than this
     MINIMUM_INTERVAL_SEC: int = 30
     DNS_REFRESH_SEC: int = 4 * 60 * 60
-    ALERT_INTERVAL_MULTIPLIER_LOW = 2.25   # interval of 1 day or longer
-    ALERT_INTERVAL_MULTIPLIER_HIGH = 1.25  # interval less than one day
+    ALERT_INTERVAL_MULTIPLIER_LOW = 2.25   # interval less than one day (longer alert window)
+    ALERT_INTERVAL_MULTIPLIER_HIGH = 1.25  # interval greater than one day (shorter alert window)
+    #
+    # if fears of UDP packet loss trouble you, set DUPE_SEND_DELAY_SEC to 0.1
+    # but remember that the send() call is BLOCKING, so this slows down your caller
+    DUPE_SEND_DELAY_SEC = None  # to disable set to None. The max is capped at 1.0 (seconds)
+
 
 default_hb_config = HbConfig()
 
@@ -118,19 +123,27 @@ class HbClient:
         json_bytes = json.dumps(metadata, allow_nan=False).encode("utf-8")
 
         # Set the UDP destination address and port
-        was_sent = False
-        for dest_ip in self.server_ips:
-            dest_addr = (dest_ip, self.serverport)
-            # Send the UDP packet to the target IP address and port
-            try:
-                print(f"Sending to {dest_addr}...")
-                print(f"Payload: {json_bytes}")
-                sock.sendto(json_bytes, dest_addr)
-                was_sent = True
-                self._last_sent_hb = time.time()
-            except socket.timeout:
-                pass  # ignore timeouts
+        def deliver_it():
+            was_sent = False
+            for dest_ip in self.server_ips:
+                dest_addr = (dest_ip, self.serverport)
+                # Send the UDP packet to the target IP address and port
+                try:
+                    print(f"Sending to {dest_addr}...")
+                    print(f"Payload: {json_bytes}")
+                    sock.sendto(json_bytes, dest_addr)
+                    was_sent = True
+                    self._last_sent_hb = time.time()
+                except socket.timeout:
+                    pass  # ignore timeouts
+            return was_sent
         #
+        was_sent = deliver_it()
+        if self.cfg.DUPE_SEND_DELAY_SEC:
+            this_delay = min(self.cfg.DUPE_SEND_DELAY_SEC, 1.0)
+            time.sleep(this_delay)
+            ret = deliver_it()
+            was_sent = was_sent or ret
         time.sleep(self.blocking_delay)
         return was_sent
 
