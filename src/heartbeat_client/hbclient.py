@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -u
-
+__all__ = ["HbClient", "HbConfig"]
 from dataclasses import dataclass
 import socket, time
 import json
@@ -150,7 +150,7 @@ class HbClient:
 
 # ... (Keep your HbDefaults and HbClient class exactly as they are) ...
 
-def _main():
+def main():
     import argparse
     import sys
 
@@ -197,4 +197,4 @@ def _main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    _main()
+    main()
