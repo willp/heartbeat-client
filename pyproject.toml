@@ -4,11 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heartbeat-client"
-version = "0.1.1"
+version = "0.2.2"
 description = "CLI client for the heartbeat-backend service"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+ "cryptography>=41.0.0"
+]
 
 [project.scripts]
 hbclient = "heartbeat_client.hbclient:main"
