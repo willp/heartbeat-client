@@ -3,6 +3,7 @@
 __all__ = ["HbClient", "HbConfig"]
 
 import os
+import random
 import sys
 import json
 import time
@@ -78,10 +79,20 @@ class KeyManager:
         os.replace(tmp_file, self.key_file)
         self._last_mtime = os.stat(self.key_file).st_mtime
 
-    def needs_rotation(self, max_age_days=30):
+    def needs_rotation(self):
         if not self.keys: return False
-        age = time.time() - self.keys.get("last_rotated_at", 0)
-        return age > (max_age_days * 86400)
+        
+        expires_at = self.keys.get("expires_at")
+        if not expires_at:
+            # Legacy fallback if an old file exists without the field
+            age = time.time() - self.keys.get("last_rotated_at", 0)
+            return age > (30 * 86400)
+            
+        # Jitter: Rotate 7 to 10 days BEFORE the server's exact expiration
+        jitter_seconds = random.uniform(7, 10) * 86400
+        
+        return time.time() > (expires_at - jitter_seconds)
+
 
     def rotate_optimistic(self):
         """Attempts rotation but fails gracefully without blocking."""
@@ -106,6 +117,7 @@ class KeyManager:
                 "access_token": new_data["access_token"],
                 "aes_secret": new_data["aes_secret"],
                 "key_id": new_data["key_id"],
+                "expires_at": new_data.get("expires_at"),                
                 "last_rotated_at": int(time.time())
             })
             self._atomic_write(current_keys)
@@ -262,20 +274,44 @@ def cmd_status(args):
         print("Not enrolled. Run 'hbclient login' first."); return
     print(f"Server URL: {args.server_url}")
     print(f"Active Key ID: {km.keys.get('key_id')}")
-    print(f"Keys last rotated: {(time.time() - km.keys.get('last_rotated_at', 0)) / 86400:.1f} days ago")
+    
+    expires_at = km.keys.get('expires_at')
+    if expires_at:
+        days_left = (expires_at - time.time()) / 86400
+        print(f"Keys expire in: {days_left:.1f} days")
+    else:
+        age = (time.time() - km.keys.get('last_rotated_at', 0)) / 86400
+        print(f"Keys last rotated: {age:.1f} days ago")
+
 
 def cmd_logout(args):
     km = KeyManager(args.server_url)
-    if km.load():
-        try:
-            urllib.request.urlopen(urllib.request.Request(
-                f"{args.server_url.rstrip('/')}/api/auth/token/revoke/",
-                headers={'Authorization': f"Bearer {km.keys.get('access_token')}"}, method='POST'
-            ))
-        except Exception as e: print(f"Server revocation warning: {e}")
+    if not km.load():
+        print("No active session found.")
+        return
+
+    try:
+        req = urllib.request.Request(
+            f"{args.server_url.rstrip('/')}/api/auth/token/revoke/",
+            headers={'Authorization': f"Bearer {km.keys.get('access_token')}"},
+            method='POST'
+        )
+        urllib.request.urlopen(req)
+        print("✅ Server successfully revoked access.")
+    except Exception as e:
+        print(f"❌ Server revocation failed: {e}")
+        if not getattr(args, 'force', False):
+            print("Aborting. The server must be reachable to securely revoke the token.")
+            print("Use --force to delete local keys anyway, or check your connection.")
+            sys.exit(1)
+        print("⚠️ Proceeding with local key destruction due to --force flag.")
+
+    try:
         os.remove(km.key_file)
-        print("✅ Local keys destroyed and server revoked access.")
-    else: print("No active session found.")
+        print("✅ Local keys destroyed.")
+    except OSError:
+        pass
+
 
 def main():
     import argparse
@@ -304,7 +340,9 @@ def main():
     
     p_login = subparsers.add_parser("login", help="Enroll this device via OAuth Device Flow")
     p_status = subparsers.add_parser("status", help="Show current key status")
+
     p_logout = subparsers.add_parser("logout", help="Revoke keys and delete local config")
+    p_logout.add_argument("--force", action="store_true", help="Force local logout even if server is unreachable")
 
     p_send = subparsers.add_parser("send", help="Send a heartbeat")
     p_send.add_argument("--app", required=True, help="App name")
