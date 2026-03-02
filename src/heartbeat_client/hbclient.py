@@ -229,10 +229,11 @@ class HbClient:
 def cmd_login(args):
     server_url = args.server_url.rstrip('/')
     km = KeyManager(server_url)
-    
+    my_hostname = socket.getfqdn()
+    my_username = os.getlogin() if os.geteuid() > 0 else "root"
     req = urllib.request.Request(
         f"{server_url}/api/auth/device/init/",
-        data=json.dumps({"client_name": socket.getfqdn()}).encode(),
+        data=json.dumps({"client_name": f"{my_username}@{my_hostname}"}).encode(),
         headers={'Content-Type': 'application/json'},
         method='POST'
     )
