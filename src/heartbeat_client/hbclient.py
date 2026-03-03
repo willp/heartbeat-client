@@ -1,6 +1,28 @@
 #!/usr/bin/python3 -u
-#!/usr/bin/python3 -u
 __all__ = ["HbClient", "HbConfig"]
+
+"""
+Heartbeat Client (hbclient) Module
+==================================
+A secure, high-reliability heartbeat client designed to send status updates 
+to a central monitoring server.
+
+Key Features:
+-------------
+- **Security**: Uses AES-GCM encryption for UDP packets with CRC32 integrity checks.
+- **Authentication**: Implements OAuth Device Flow for automatic key rotation.
+- **Resilience**: Transparent DNS resolution, jittered retries, and atomic file I/O 
+  to handle network instability or crashes gracefully.
+- **Thread Safety**: File locking (fcntl) ensures safe multi-process access to keys.
+
+Usage:
+------
+    from heartbeat_client.hbclient import HbClient, HbConfig
+    
+    # Basic usage
+    client = HbClient(name="my-app", interval=60)
+    client.send(task="startup")
+"""
 
 import os
 import random
@@ -24,6 +46,26 @@ except ImportError:
 
 @dataclass
 class HbConfig:
+    """
+    Configuration settings for the Heartbeat Client.
+
+    This dataclass defines default thresholds and intervals for heartbeat behavior,
+    network resolution frequency, and alert logic multipliers.
+
+    Attributes:
+        server (str): The hostname of the heartbeat server (UDP). Defaults to "hb".
+        serverport (int): The UDP port number for the server. Defaults to 8333.
+        debug (bool): If True, enables verbose logging output. Defaults to False.
+        
+        MINIMUM_INTERVAL_SEC (int): Hard floor (30s) for sending heartbeats to prevent 
+                                    network storming. Cannot be overridden by user inputs.
+        DNS_REFRESH_SEC (int): Interval in seconds between re-resolving the server's IP.
+        ALERT_INTERVAL_MULTIPLIER_LOW (float): Multiplier for alert threshold when intervals < 1 day.
+        ALERT_INTERVAL_MULTIPLIER_HIGH (float): Multiplier for alert threshold when intervals >= 1 day.
+        DUPE_SEND_DELAY_SEC (int|None): Optional delay before attempting a duplicate send 
+                                        if the first fails or for redundancy.
+    """
+
     server: str = "hb"
     serverport: int = 8333
     debug: bool = False
@@ -36,8 +78,30 @@ class HbConfig:
 default_hb_config = HbConfig()
 
 class KeyManager:
-    """Handles thread-safe, multi-process key storage and atomic rotation."""
+    """
+    Manages encryption keys and secure credentials for the client session.
+
+    This class handles the lifecycle of API tokens and AES secrets, ensuring they are
+    stored securely on disk with strict permissions. It supports atomic writes to 
+    prevent corruption during crashes and implements thread-safe loading using file locks.
+
+    Features:
+        - **Atomic Writes**: Uses a temporary file + `os.replace` pattern to ensure 
+          the key file is never left in a partial state.
+        - **Hot-Reload**: Checks file modification times (`mtime`) to avoid unnecessary 
+          disk I/O if keys haven't changed.
+        - **Rotation Logic**: Automatically detects near-expiration tokens (with jitter) 
+          and attempts non-blocking rotation via the server's OAuth endpoint.
+    """
+
     def __init__(self, server_url):
+        """
+        Initialize the Key Manager.
+
+        Args:
+            server_url (str): The base HTTPS URL of the server used for OAuth 
+                              token endpoints (e.g., https://hb.example.com).
+        """
         self.config_dir = os.path.expanduser("~/.config/hbclient")
         self.key_file = os.path.join(self.config_dir, "keys.json")
         self.server_url = server_url.rstrip('/')
@@ -49,7 +113,21 @@ class KeyManager:
         os.chmod(self.config_dir, 0o700)
 
     def load(self, force=False):
-        """Fast hot-reload using st_mtime."""
+        """
+        Load key material from disk into memory.
+
+        Optimized for performance by checking the file's modification time (`mtime`). 
+        If the file hasn't changed since the last load and `force` is False, 
+        it returns immediately without reading the disk.
+
+        Args:
+            force (bool): If True, forces a re-read from disk even if mtime matches.
+                          Used during login/logout or manual refresh operations.
+        
+        Returns:
+            bool: True if keys were successfully loaded or are already current; 
+                  False if the file is missing, unreadable, or invalid JSON.
+        """
         if not os.path.exists(self.key_file): return False
         mtime = os.stat(self.key_file).st_mtime
         if not force and mtime <= self._last_mtime: return True
@@ -62,7 +140,21 @@ class KeyManager:
             return False
 
     def _atomic_write(self, data):
-        """Writes to a tmp file with strict 0600 permissions and atomically replaces."""
+        """
+        Write key data to disk atomically with strict file permissions.
+
+        This method ensures that the `keys.json` file is never left in a corrupted 
+        or partial state. It writes to a temporary file with mode 0o600 (read/write 
+        owner only), flushes and syncs the data, then atomically renames it over 
+        the original.
+
+        Args:
+            data (dict): The dictionary containing keys like 'access_token', 
+                         'aes_secret', 'key_id', etc.
+        
+        Raises:
+            OSError: If the system fails to create or write to the temporary file.
+        """
         tmp_file = self.key_file + ".tmp"
         
         # Bypass default umask: force file creation with strict owner-only read/write
@@ -80,6 +172,16 @@ class KeyManager:
         self._last_mtime = os.stat(self.key_file).st_mtime
 
     def needs_rotation(self):
+        """
+        Determine if the current keys are near expiration and require rotation.
+
+        Uses a randomized jitter window (7-10 days before expiry) to prevent 
+        "thundering herd" problems where many clients try to rotate at the exact 
+        same moment when a global token expires.
+
+        Returns:
+            bool: True if immediate or near-term rotation is required; False otherwise.
+        """
         if not self.keys: return False
         
         expires_at = self.keys.get("expires_at")
@@ -95,7 +197,20 @@ class KeyManager:
 
 
     def rotate_optimistic(self):
-        """Attempts rotation but fails gracefully without blocking."""
+        """
+        Perform a non-blocking key rotation using the OAuth Device Flow.
+
+        This method attempts to refresh credentials by exchanging the current 
+        `device_code` for a new set of tokens and AES secrets. It does not block 
+        indefinitely; if the server is unreachable or takes too long, the client 
+        continues operating with existing keys until they truly expire.
+
+        Workflow:
+            1. Check for an existing `access_token` to validate current session.
+            2. Call `/api/auth/token/refresh/`.
+            3. If successful, update local cache and trigger atomic write.
+            4. If failed (network/auth), silently ignore to ensure high availability.
+        """
         if not os.path.exists(self.key_file): return
         try:
             f = open(self.key_file, 'a+')
@@ -132,6 +247,33 @@ class KeyManager:
 default_hb_config = HbConfig()
 
 class HbClient:
+    """
+    Initialize the Heartbeat Client with network and application parameters.
+
+    This class orchestrates the heartbeat cycle, including DNS resolution, 
+    key management, payload encryption, and UDP transmission.
+
+    Args:
+        name (str): The application or service name identifying this client.
+        interval (int): The expected interval between heartbeats in seconds.
+        alert_after (int | None): Threshold for alerting if no heartbeat is received. 
+            If None, calculated based on `interval` and config multipliers.
+        task (str | None): Optional specific task name associated with the heartbeat.
+        version (str | None): Optional version string of the application.
+        port (int | None): The listening port of the application being monitored.
+        config (HbConfig | None): Configuration object for global settings (DNS, crypto, etc.).
+            Defaults to a global singleton if not provided.
+        blocking (bool): If True, adds a small sleep after sending to prevent tight looping.
+        **kwargs: Overrides for server hostname, port, and URL construction.
+
+    Attributes:
+        cfg (HbConfig): The active configuration object.
+        server_url (str): The constructed HTTPS URL for the backend API.
+        myhostname (str): The fully qualified domain name of the current machine.
+        server_ips (set[str]): The set of resolved IP addresses for the server.
+        key_manager (KeyManager): Instance handling credential loading and rotation.
+    """
+
     def __init__(
         self, name: str, interval: int, alert_after: int | None = None,
         task: str | None = None, version: str | None = None, port: int | None = None,
@@ -156,18 +298,50 @@ class HbClient:
         self.key_manager = KeyManager(self.server_url)
 
     def _update_dns(self, ignore_errors=False):
+        """
+        Refresh the list of IP addresses for the configured server hostname.
+
+        This method checks if the DNS cache (stored in `_last_dns_resolve`) is stale. 
+        If so, it performs a fresh `gethostbyname_ex` lookup to handle dynamic IP changes.
+        
+        Args:
+            ignore_errors (bool): If True, suppresses exceptions and returns False on failure.
+                                 If False, an assertion ensures `server_ips` remains valid.
+
+        Returns:
+            bool: True if the DNS list was successfully updated or was still fresh; 
+                  False if no update occurred or an error happened with `ignore_errors=True`.
+        """
         if time.time() - self._last_dns_resolve < self.cfg.DNS_REFRESH_SEC: return False
         try:
-            _, _, server_ips = socket.gethostbyname_ex(self.servername)
-            if server_ips:
-                self.server_ips = set(server_ips)
+            if self.cfg.debug:
+                print(f"HbClient DEBUG: refreshing DNS lookup for {self.servername}... ", end='')
+            _, _, new_server_ips = socket.gethostbyname_ex(self.servername)
+            if new_server_ips:
+                if self.cfg.debug:
+                    if set(new_server_ips) == self.server_ips:
+                        print(f' no changes ({len(self.server_ips)} IPs)')
+                    else:
+                        print(f' updated from {self.server_ips} to -> {new_server_ips}')
+                self.server_ips = set(new_server_ips)
                 self._last_dns_resolve = time.time()
-        except Exception:
+        except Exception as exc:
+            if self.cfg.debug:
+                print(f"FAILED DNS lookup: {exc}")
             if not ignore_errors: assert self.server_ips
             else: return False
         return True
 
     def make_message(self):
+        """
+        Construct the raw heartbeat metadata dictionary.
+
+        Builds a JSON-compatible dict containing essential client identification and status data.
+        
+        Returns:
+            dict: A dictionary with keys for hostname (h), name (n), interval (i), 
+                  timestamp (@), alert threshold (!), and optional task/version/port fields.
+        """
         metadata = {"h": self.myhostname, "n": self.name, "i": self.interval, "@": int(time.time()), "!": int(self.alert_after)}
         if self.task: metadata["t"] = self.task
         if self.version: metadata["v"] = self.version
@@ -175,6 +349,28 @@ class HbClient:
         return metadata
 
     def send(self, final_report: str | None = None, strict_interval=False):
+        """
+        Construct, encrypt, and transmit the heartbeat packet via UDP.
+
+        This is the core execution method. It performs the following steps:
+        1. Refreshes DNS if necessary.
+        2. Enforces minimum interval constraints to prevent flooding.
+        3. Loads keys from disk and triggers rotation if expiration is near.
+        4. Serializes metadata (and optional final report) to JSON.
+        5. Encrypts the payload using AES-GCM if valid keys exist; otherwise sends plaintext.
+        6. Packs the binary packet with headers (Magic, Version, KeyID), Nonce, and CRC32.
+        7. Sends the packet to all known server IPs. Implements a "duplex" send strategy 
+           for reliability by sending twice with a delay if configured.
+
+        Args:
+            final_report (str | None): An optional status message to include at the end of the session.
+                                      If longer than 1024 chars, it is truncated and marked.
+            strict_interval (bool): If True, strictly enforces the configured `interval` 
+                                   rather than the minimum safety interval.
+
+        Returns:
+            bool: True if the packet was successfully sent to at least one server IP; False otherwise.
+        """
         self._update_dns(ignore_errors=True)
         since_last_hb = time.time() - self._last_sent_hb
         if since_last_hb < self.cfg.MINIMUM_INTERVAL_SEC: return False
@@ -187,7 +383,7 @@ class HbClient:
 
         metadata = self.make_message()
         if final_report:
-            metadata["f"] = final_report[0:1000] + f" (TRUNCATED {1000-len(final_report)} ...)" if len(final_report) > 1024 else final_report
+            metadata["f"] = final_report[0:1000] + f" (TRUNCATED {1000-len(final_report)} bytes ...)" if len(final_report) > 1000 else final_report
 
         json_bytes = json.dumps(metadata, allow_nan=False).encode("utf-8")
         
@@ -198,16 +394,20 @@ class HbClient:
             aes_secret = base64.b64decode(self.key_manager.keys['aes_secret'])
             nonce = os.urandom(12)
             aesgcm = AESGCM(aes_secret)
+            # Encrypt payload; associated_data=None
             encrypted_data = aesgcm.encrypt(nonce, json_bytes, associated_data=None)
             
+            # Header: Magic(0xDB, 0x01) + KeyID (4 bytes Big Endian)
             header = struct.pack(">BBI", 0xDB, 0x01, key_id)
             payload_without_crc = header + nonce + encrypted_data
+            # Append CRC32 checksum
             final_packet = payload_without_crc + struct.pack(">I", zlib.crc32(payload_without_crc) & 0xFFFFFFFF)
         else:
+            # Fallback to cleartext if keys are missing (fail-open)
             final_packet = json_bytes 
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(None)
+        sock.settimeout(None)  # Blocking send
         
         def deliver_it():
             was_sent = False
@@ -215,10 +415,13 @@ class HbClient:
                 try:
                     sock.sendto(final_packet, (dest_ip, self.serverport))
                     was_sent = True; self._last_sent_hb = time.time()
-                except socket.timeout: pass
+                except socket.timeout: pass   # Expected for unreachable hosts in this context
             return was_sent
 
+        # Primary send attempt
         was_sent = deliver_it()
+
+        # Optional "Duplex" send for redundancy
         if self.cfg.DUPE_SEND_DELAY_SEC:
             time.sleep(min(self.cfg.DUPE_SEND_DELAY_SEC, 1.0))
             was_sent = was_sent or deliver_it()
@@ -227,6 +430,21 @@ class HbClient:
         return was_sent
     
 def cmd_login(args):
+    """
+    Execute the OAuth Device Flow to enroll the client with the server.
+
+    This function initiates the authentication process:
+    1. Requests a `device_code` and `user_code` from the server.
+    2. Prompts the user to visit a URL and enter the code.
+    3. Polls the server for approval status using the device code.
+    4. Once approved, retrieves the access token and secrets, then saves them atomically.
+
+    Args:
+        args (Namespace): Parsed command-line arguments containing `server_url`.
+    
+    Raises:
+        SystemExit: If the user cancels, the server is unreachable, or authentication fails.
+    """
     server_url = args.server_url.rstrip('/')
     km = KeyManager(server_url)
     my_hostname = socket.getfqdn()
@@ -270,6 +488,17 @@ def cmd_login(args):
     print(f"\n✅ Successfully enrolled! Keys saved to {km.key_file}")
 
 def cmd_status(args):
+    """
+    Display the current authentication status and key expiration details.
+
+    Loads keys from disk and prints:
+    - The configured Server URL.
+    - The active Key ID.
+    - Time remaining until expiration, or age of the last rotation.
+
+    Args:
+        args (Namespace): Parsed command-line arguments containing `server_url`.
+    """
     km = KeyManager(args.server_url)
     if not km.load():
         print("Not enrolled. Run 'hbclient login' first."); return
@@ -286,6 +515,22 @@ def cmd_status(args):
 
 
 def cmd_logout(args):
+    """
+    Revoke credentials on the server and delete local key files.
+
+    Ensures a clean session termination by:
+    1. Calling the server's revocation endpoint with the current access token.
+    2. Deleting the local `keys.json` file.
+
+    If the server is unreachable, the operation fails unless `--force` is passed, 
+    which allows local key destruction without server confirmation.
+
+    Args:
+        args (Namespace): Parsed arguments including `server_url` and optional `force`.
+    
+    Raises:
+        SystemExit: If revocation fails and `--force` is not set.
+    """
     km = KeyManager(args.server_url)
     if not km.load():
         print("No active session found.")
@@ -315,6 +560,21 @@ def cmd_logout(args):
 
 
 def main():
+    """
+    Entry point for the CLI application.
+
+    Handles argument parsing, legacy command interpolation, and routing to specific 
+    sub-commands (login, status, logout, send).
+
+    Features:
+    - **Legacy Interceptor**: If an unknown command is passed followed by `--task`, 
+      it assumes the user intended to run `send --app <command> --task ...` and 
+      modifies `sys.argv` accordingly.
+    - **Argument Mapping**: Maps 'help' to '-h' for better UX.
+    - **Subparser Logic**: Defines specific arguments for each mode (e.g., `--app` and 
+      `--task` are required for the `send` command).
+    """
+    # --------------------------------------------------------------------
     import argparse
 
     # --- THE STRICT LEGACY INTERCEPTOR ---
@@ -377,3 +637,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
