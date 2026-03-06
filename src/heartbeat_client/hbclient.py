@@ -26,6 +26,7 @@ Usage:
 
 import os
 import random
+import re
 import sys
 import json
 import time
@@ -559,6 +560,79 @@ def cmd_logout(args):
         pass
 
 
+def parse_time_duration(duration_str: str) -> int:
+    """
+    Parse a human-readable time duration string into seconds.
+    
+    Supported formats:
+        - Naked numbers (e.g., "300") -> treated as seconds
+        - Numbers with suffixes: s, m, h, d, w, M, y
+          (seconds, minutes, hours, days, weeks, months, years)
+    
+    Args:
+        duration_str: A string like "1h", "5m", "1.5d", "3w", "1M", "1.4y", or "300"
+    
+    Returns:
+        An integer > 0 representing the number of seconds
+        
+    Raises:
+        ValueError: If the input cannot be parsed or results in non-positive value
+    """
+    if not duration_str or not isinstance(duration_str, str):
+        raise ValueError("Input must be a non-empty string")
+    
+    duration_str = duration_str.strip()
+    
+    # Define conversion factors to seconds
+    conversions = {
+        's': 1,           # seconds
+        'm': 60,          # minutes
+        'h': 3600,        # hours
+        'd': 86400,       # days
+        'w': 604800,      # weeks (7 * 86400)
+        'M': 2592000,     # months (30 * 86400)
+        'y': 31536000     # years (365 * 86400)
+    }
+    
+    # Match number (integer or decimal) followed by optional unit suffix
+    pattern = r'^(\d+(?:\.\d+)?)([smhdwMy])?$'
+    match = re.match(pattern, duration_str)
+    
+    if not match:
+        raise ValueError(
+            f"Invalid duration format: '{duration_str}'. "
+            "Expected a number optionally followed by a unit suffix. "
+            "Valid suffixes are: s (seconds), m (minutes), h (hours), "
+            "d (days), w (weeks), M (months, 30 days), y (years). "
+            "Examples: '5m', '1.5h', '2d', '3w', '1M', '0.5y'"
+        )
+    
+    value_str = match.group(1)
+    unit = match.group(2) if match.group(2) else 's'  # default to seconds
+    
+    try:
+        value = float(value_str)
+    except ValueError as e:
+        raise ValueError(f"Invalid numeric value '{value_str}': {e}")
+    
+    if value <= 0:
+        raise ValueError(
+            f"Duration value must be greater than 0, got {value}"
+        )
+    
+    seconds = value * conversions[unit]
+    
+    # Convert to integer (truncates decimal part)
+    result = int(seconds)
+    
+    if result <= 0:
+        raise ValueError(
+            f"Calculated duration results in non-positive value. "
+            f"Input '{duration_str}' equals {seconds} seconds, which truncates to {result}"
+        )
+    
+    return result
+
 def main():
     """
     Entry point for the CLI application.
@@ -606,14 +680,14 @@ def main():
     p_logout.add_argument("--force", action="store_true", help="Force local logout even if server is unreachable")
 
     p_send = subparsers.add_parser("send", help="Send a heartbeat")
-    p_send.add_argument("--app", required=True, help="App name")
-    p_send.add_argument("--task", required=True, help="Task name") # <--- NOW STRICTLY REQUIRED
-    p_send.add_argument("--port", type=int, help="App port")
-    p_send.add_argument("--version", help="Version string")
+    p_send.add_argument("--app", "-a", required=True, help="App name")
+    p_send.add_argument("--task", "-t", required=True, help="Task name") # <--- NOW STRICTLY REQUIRED
+    p_send.add_argument("--port", "-p", type=str, help="App port (optional)")
+    p_send.add_argument("--version", "-v", help="Version string for the app")
     p_send.add_argument("--debug", "-d", action='store_true', default=False)
-    p_send.add_argument("--interval", type=int, default=60, help="Heartbeat interval in seconds")
-    p_send.add_argument("--alert-after", type=int, help="Alert threshold in seconds")
-    p_send.add_argument("--final-report", help="Send a final status message and exit")
+    p_send.add_argument("--interval", "-i", type=str, default=60, help="Heartbeat interval in seconds or human durations e.g. 6h 2.5d 3w ...")
+    p_send.add_argument("--alert-after", "-A", type=str, help="Alert threshold in seconds or human durations e.g. 12h 6.25d 11w ...")
+    p_send.add_argument("--final-report", "-R", help="Send a final status message and exit, use double quotes to include spaces")
 
     args = parser.parse_args()
     if not args.server_url:
@@ -627,7 +701,7 @@ def main():
         cmd_logout(args)
     elif args.command == "send":
         client = HbClient(
-            name=args.app, interval=args.interval, alert_after=args.alert_after,
+            name=args.app, interval=parse_time_duration(args.interval), alert_after=parse_time_duration(args.alert_after),
             task=args.task, version=args.version, port=args.port,
             servername=args.server, serverport=args.serverport, server_url=args.server_url,
             config=HbConfig(debug=args.debug)
