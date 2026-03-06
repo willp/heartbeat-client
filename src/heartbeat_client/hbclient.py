@@ -654,7 +654,7 @@ def main():
     # --- THE STRICT LEGACY INTERCEPTOR ---
     known_commands = ['login', 'send', 'status', 'logout', '-h', '--help', 'help']
     
-    if len(sys.argv) > 1 and sys.argv[1] not in known_commands:
+    if len(sys.argv) > 1 and sys.argv[1] not in known_commands and not sys.argv[1].startswith('-'):
         # ONLY intercept if --task is explicitly provided
         if '--task' in sys.argv:
             app_name = sys.argv.pop(1)
@@ -682,12 +682,12 @@ def main():
     p_send = subparsers.add_parser("send", help="Send a heartbeat")
     p_send.add_argument("--app", "-a", required=True, help="App name")
     p_send.add_argument("--task", "-t", required=True, help="Task name") # <--- NOW STRICTLY REQUIRED
-    p_send.add_argument("--port", "-p", type=str, help="App port (optional)")
-    p_send.add_argument("--version", "-v", help="Version string for the app")
-    p_send.add_argument("--debug", "-d", action='store_true', default=False)
-    p_send.add_argument("--interval", "-i", type=str, default=60, help="Heartbeat interval in seconds or human durations e.g. 6h 2.5d 3w ...")
+    p_send.add_argument("--interval", "-i", required=True, type=str, default=60, help="Heartbeat interval in seconds or human durations e.g. 6h 2.5d 3w ...")
     p_send.add_argument("--alert-after", "-A", type=str, help="Alert threshold in seconds or human durations e.g. 12h 6.25d 11w ...")
+    p_send.add_argument("--port", "-p", type=str, help="App port (optional)")
+    p_send.add_argument("--version", "-v", help="Version string for the app (optional)")
     p_send.add_argument("--final-report", "-R", help="Send a final status message and exit, use double quotes to include spaces")
+    p_send.add_argument("--debug", "-d", action='store_true', default=False)
 
     args = parser.parse_args()
     if not args.server_url:
@@ -701,7 +701,7 @@ def main():
         cmd_logout(args)
     elif args.command == "send":
         client = HbClient(
-            name=args.app, interval=parse_time_duration(args.interval), alert_after=parse_time_duration(args.alert_after),
+            name=args.app, interval=parse_time_duration(args.interval), alert_after=parse_time_duration(args.alert_after) if args.alert_after else None,
             task=args.task, version=args.version, port=args.port,
             servername=args.server, serverport=args.serverport, server_url=args.server_url,
             config=HbConfig(debug=args.debug)
