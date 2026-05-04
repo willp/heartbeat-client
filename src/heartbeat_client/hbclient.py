@@ -18,7 +18,7 @@ Key Features:
 Usage:
 ------
     from heartbeat_client.hbclient import HbClient, HbConfig
-    
+
     # Basic usage
     client = HbClient(name="my-app", interval=60)
     client.send(task="startup")
