@@ -72,9 +72,9 @@ class HbConfig:
     debug: bool = False
     MINIMUM_INTERVAL_SEC: int = 30
     DNS_REFRESH_SEC: int = 4 * 60 * 60
-    ALERT_INTERVAL_MULTIPLIER_LOW = 2.25
-    ALERT_INTERVAL_MULTIPLIER_HIGH = 1.25
-    DUPE_SEND_DELAY_SEC = None
+    ALERT_INTERVAL_MULTIPLIER_LOW: float = 2.25
+    ALERT_INTERVAL_MULTIPLIER_HIGH: float = 1.25
+    DUPE_SEND_DELAY_SEC: float|None = None
 
 default_hb_config = HbConfig()
 
@@ -422,9 +422,9 @@ class HbClient:
         # Primary send attempt
         was_sent = deliver_it()
 
-        # Optional "Duplex" send for redundancy
+        # Optional "Dupe" send for redundancy
         if self.cfg.DUPE_SEND_DELAY_SEC:
-            time.sleep(min(self.cfg.DUPE_SEND_DELAY_SEC, 1.0))
+            time.sleep(max(self.cfg.DUPE_SEND_DELAY_SEC, 1.0))
             was_sent = was_sent or deliver_it()
             
         time.sleep(self.blocking_delay)
