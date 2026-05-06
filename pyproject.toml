@@ -1,19 +1,44 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "commitizen"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "heartbeat-client"
-version = "0.3.4"
-description = "CLI client for the heartbeat-backend service"
+name = "nuclei-heartbeat-client"
+version = "0.4.0"
+description = "Secure heartbeat client for the Nuclei monitoring ecosystem"
 readme = "README.md"
+long_description = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "J. Will Pierce", email = "jwillp@gmail.com"},
+]
+keywords = ["heartbeat", "monitoring", "nuclei", "client", "heartbeat-monitoring"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+    "Topic :: System :: Monitoring",
+]
 dependencies = [
- "cryptography>=41.0.0"
+ "cryptography>=41.0.0",
+ "filelock>=3.12.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/willp/heartbeat-client"
+Repository = "https://github.com/willp/heartbeat-client"
+Documentation = "https://github.com/willp/heartbeat-client/blob/main/README.md"
+
 [project.scripts]
-hbclient = "heartbeat_client.hbclient:main"
+nuclei-heartbeat-client = "nuclei_heartbeat_client.hbclient:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
