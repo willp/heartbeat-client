@@ -1,10 +1,12 @@
 """Tests for CLI commands."""
-import pytest
 import sys
 import urllib.error
-from unittest.mock import patch
 from argparse import Namespace
-from nuclei_heartbeat_client.hbclient import cmd_login, cmd_status, cmd_logout, main
+from unittest.mock import patch
+
+import pytest
+
+from nuclei_heartbeat_client.hbclient import cmd_login, cmd_logout, cmd_status, main
 
 
 class TestCmdLogin:
@@ -48,21 +50,21 @@ class TestMainCLI:
 
     def test_main_unknown_command_without_task_flag(self):
         """Test main with unknown command."""
-        with patch.object(sys, "argv", ["nuclei-heartbeat-client", "unknown"]):
+        with patch.object(sys, "argv", ["nhbclient", "unknown"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code != 0  # Unknown command should fail
 
     def test_main_send_requires_app_and_task(self):
         """Test main with send command requiring app and task."""
-        with patch.object(sys, "argv", ["nuclei-heartbeat-client", "send"]):
+        with patch.object(sys, "argv", ["nhbclient", "send"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code != 0
 
     def test_main_help_flag(self):
         """Test main with --help."""
-        with patch.object(sys, "argv", ["nuclei-heartbeat-client", "--help"]):
+        with patch.object(sys, "argv", ["nhbclient", "--help"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             # --help exits with 0

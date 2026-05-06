@@ -10,6 +10,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 env/
+.venv/
 build/
 develop-eggs/
 dist/
@@ -59,3 +60,9 @@ docs/_build/
 target/
 
 push_wheel.sh
+.mypy_cache
+.pytest_cache/
+.ruff_cache/
+__pypackages__/
+.python-version
+.DS_Store

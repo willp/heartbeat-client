@@ -1,23 +1,21 @@
 [build-system]
-requires = ["setuptools>=61.0", "commitizen"]
+requires = ["setuptools>=69.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nuclei-heartbeat-client"
 version = "0.4.0"
 description = "Secure heartbeat client for the Nuclei monitoring ecosystem"
-readme = "README.md"
-long_description = {file = "README.md", content-type = "text/markdown"}
+readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 authors = [
-    {name = "J. Will Pierce", email = "jwillp@gmail.com"},
+    {name = "J. Will Pierce", email = "willp@users.noreply.github.com"},
 ]
 keywords = ["heartbeat", "monitoring", "nuclei", "client", "heartbeat-monitoring"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -28,20 +26,60 @@ classifiers = [
     "Topic :: System :: Monitoring",
 ]
 dependencies = [
- "cryptography>=41.0.0",
- "filelock>=3.12.0",
+    "cryptography>=41.0.0",
+    "filelock>=3.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2.2",
+    "pytest>=8.3.0",
+    "ruff>=0.6.0",
+    "twine>=5.1.0",
+]
+typecheck = [
+    "mypy>=1.11.0",
+]
+release = [
+    "commitizen>=3.29.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/willp/heartbeat-client"
 Repository = "https://github.com/willp/heartbeat-client"
 Documentation = "https://github.com/willp/heartbeat-client/blob/main/README.md"
+Issues = "https://github.com/willp/heartbeat-client/issues"
+Changelog = "https://github.com/willp/heartbeat-client/blob/main/CHANGELOG.md"
 
 [project.scripts]
-nuclei-heartbeat-client = "nuclei_heartbeat_client.hbclient:main"
+nhbclient = "nuclei_heartbeat_client.hbclient:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["nuclei_heartbeat_client*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+pretty = true
 
 [tool.commitizen]
 name = "cz_conventional_commits"

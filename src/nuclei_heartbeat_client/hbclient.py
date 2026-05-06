@@ -1,5 +1,6 @@
 import argparse
 import base64
+import getpass
 import json
 import logging
 import os
@@ -12,11 +13,12 @@ import time
 import urllib.error
 import urllib.request
 import zlib
+from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict
 
 from filelock import FileLock, Timeout
-
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -29,7 +31,7 @@ __all__ = [
 ]
 
 """
-nuclei-heartbeat-client — Secure Heartbeat Client Library
+nhbclient — Secure Heartbeat Client Library
 ==========================================================
 
 A secure, high-reliability heartbeat client designed to send encrypted status
@@ -46,7 +48,7 @@ Key Features:
       to credential files.
 
 Installation:
-    pip install nuclei-heartbeat-client
+    pip install nhbclient
 
 Usage:
     from nuclei_heartbeat_client import HbClient, HbConfig
@@ -56,7 +58,7 @@ Usage:
     client.send(task="startup")
 
     # CLI usage
-    # nuclei-heartbeat-client send --app my-app --task deploy --interval 60
+    # nhbclient send --app my-app --task deploy --interval 60
 """
 
 try:
@@ -127,7 +129,7 @@ class KeyManager:
             server_url (str): The base HTTPS URL of the server used for OAuth
                               token endpoints (e.g., https://hb.example.com).
         """
-        self.config_dir = os.path.expanduser("~/.config/hbclient")
+        self.config_dir = self._resolve_config_dir()
         self.key_file = os.path.join(self.config_dir, "keys.json")
         self.server_url = server_url.rstrip("/")
         self.keys: Dict[str, Any] = {}
@@ -136,6 +138,29 @@ class KeyManager:
         # Create dir and explicitly lock it down to owner-only (drwx------)
         os.makedirs(self.config_dir, exist_ok=True)
         os.chmod(self.config_dir, 0o700)
+
+    @staticmethod
+    def _resolve_config_dir() -> str:
+        """Resolve a config directory across XDG and native OS defaults."""
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+        if xdg_config_home:
+            return str(Path(xdg_config_home).expanduser() / "hbclient")
+
+        # Linux/Unix fallback requested by project policy.
+        posix_fallback = Path(os.path.expanduser("~/.config/hbclient"))
+        with suppress(OSError):
+            posix_fallback.parent.mkdir(parents=True, exist_ok=True)
+            return str(posix_fallback)
+
+        # Native platform fallback as a last resort.
+        if os.name == "nt":
+            appdata = os.environ.get("APPDATA")
+            if appdata:
+                return str(Path(appdata) / "hbclient")
+            return str(Path.home() / "AppData" / "Roaming" / "hbclient")
+        if sys.platform == "darwin":
+            return str(Path.home() / "Library" / "Application Support" / "hbclient")
+        return str(Path.home() / ".config" / "hbclient")
 
     def load(self, force: bool = False) -> bool:
         """
@@ -198,6 +223,35 @@ class KeyManager:
         os.replace(tmp_file, self.key_file)
         self._last_mtime = os.stat(self.key_file).st_mtime
 
+    def is_enrolled(self) -> bool:
+        """Return True when an enrollment file exists on disk."""
+        return os.path.exists(self.key_file)
+
+    def has_valid_send_keys(self) -> bool:
+        """Return True when key material is present and usable for encryption."""
+        if not self.keys:
+            return False
+        try:
+            key_id = self.keys.get("key_id")
+            aes_secret_b64 = self.keys.get("aes_secret")
+            if not isinstance(key_id, int) or not isinstance(aes_secret_b64, str):
+                return False
+            secret = base64.b64decode(aes_secret_b64)
+            return len(secret) in (16, 24, 32)
+        except (ValueError, TypeError):
+            return False
+
+    def get_key_file_path(self) -> str:
+        """Return the absolute path to the keys file."""
+        return os.path.abspath(self.key_file)
+    
+    def is_expired(self) -> bool:
+        """Return True when key expiration is known and in the past."""
+        expires_at = self.keys.get("expires_at")
+        if not isinstance(expires_at, (int, float)):
+            return False
+        return time.time() >= float(expires_at)
+
     def needs_rotation(self) -> bool:
         """
         Determine if the current keys are near expiration and require rotation.
@@ -217,18 +271,23 @@ class KeyManager:
         if not self.keys:
             return False
 
-        expires_at = self.keys.get("expires_at")
-        if not expires_at:
+        expires_at_raw = self.keys.get("expires_at")
+        if not isinstance(expires_at_raw, (int, float)):
             # Legacy fallback if an old file exists without the field
-            age = time.time() - self.keys.get("last_rotated_at", 0)
+            last_rotated_raw = self.keys.get("last_rotated_at", 0)
+            last_rotated_at = (
+                float(last_rotated_raw) if isinstance(last_rotated_raw, (int, float)) else 0.0
+            )
+            age = time.time() - last_rotated_at
             return age > (30 * 86400)
 
         # Jitter: Rotate 7 to 10 days BEFORE the server's exact expiration
         jitter_seconds = random.uniform(7, 10) * 86400
 
+        expires_at = float(expires_at_raw)
         return time.time() > (expires_at - jitter_seconds)
 
-    def rotate_optimistic(self) -> None:
+    def rotate_optimistic(self) -> bool:
         """
         Perform a non-blocking key rotation using the OAuth Device Flow.
 
@@ -248,7 +307,7 @@ class KeyManager:
             multiple processes. Returns immediately if the lock is held.
         """
         if not os.path.exists(self.key_file):
-            return
+            return False
 
         lock_path = self.key_file + ".lock"
         lock = FileLock(lock_path, timeout=0)
@@ -278,14 +337,15 @@ class KeyManager:
                 )
                 self._atomic_write(current_keys)
                 self.keys = current_keys
+                return True
         except Timeout:
             # Another process is rotating right now
-            return
+            return False
         except (urllib.error.URLError, OSError, KeyError, json.JSONDecodeError) as e:
             # Fail open: data plane continues with old keys.
             # It's better to log this if a logging framework were in use.
             log.warning("Failed to rotate key during optimistic check: %s", e)
-            pass
+            return False
 
 
 default_hb_config = HbConfig()
@@ -341,11 +401,13 @@ class HbClient:
         servername: str | None = None,
         serverport: int | None = None,
         server_url: str | None = None,
+        strict_security: bool = True,
     ):
         self.cfg = config or default_hb_config
         self.servername = servername or self.cfg.server
         self.serverport = serverport or self.cfg.serverport
         self.server_url = server_url or f"https://{self.servername}:{self.serverport}"
+        self.strict_security = strict_security
 
         self.blocking_delay: float = 0.1 if blocking else 0.0
         self.interval = interval
@@ -369,6 +431,45 @@ class HbClient:
         self.version = version
         self._last_sent_hb: float = 0.0
         self.key_manager = KeyManager(self.server_url)
+        self._sock: socket.socket | None = None
+        self._initialize_security()
+
+    def _initialize_security(self) -> None:
+        """Enforce secure-by-default behavior during client construction."""
+        loaded = self.key_manager.load(force=True)
+        has_keys = loaded and self.key_manager.has_valid_send_keys()
+        if not has_keys:
+            if self.strict_security:
+                raise RuntimeError(
+                    "Strict security mode requires enrolled valid keys. "
+                    "Run 'nhbclient login' first."
+                )
+            return
+
+        # Attempt rotation when stale; strict mode fails only when expired + refresh failed.
+        if self.key_manager.needs_rotation():
+            rotated = self.key_manager.rotate_optimistic()
+            if not rotated:
+                self.key_manager.load(force=True)
+            if self.strict_security and self.key_manager.is_expired():
+                raise RuntimeError(
+                    "Key is expired and refresh failed in strict security mode. "
+                    "Re-run enrollment or restore server connectivity."
+                )
+
+    def _get_socket(self) -> socket.socket:
+        """Reuse a UDP socket for this client instance."""
+        if self._sock is None:
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sock.settimeout(None)
+        return self._sock
+
+    def close(self) -> None:
+        """Close the client's UDP socket."""
+        if self._sock is not None:
+            with suppress(OSError):
+                self._sock.close()
+            self._sock = None
 
     def _update_dns(self, ignore_errors: bool = False) -> bool:
         """
@@ -407,7 +508,12 @@ class HbClient:
                 self.server_ips = set(new_server_ips)
                 self._last_dns_resolve = time.time()
         except Exception as exc:
-            log.warning("FAILED DNS lookup for %s: %s", self.servername, exc)
+            log.warning(
+                "FAILED DNS lookup for %s: %s (%s)",
+                self.servername,
+                exc,
+                type(exc).__name__,
+            )
             if not ignore_errors:
                 raise RuntimeError(
                     f"DNS resolution failed for '{self.servername}'. "
@@ -486,7 +592,13 @@ class HbClient:
         # Hot Reload & Rotate
         self.key_manager.load()
         if self.key_manager.needs_rotation():
-            self.key_manager.rotate_optimistic()
+            rotated = self.key_manager.rotate_optimistic()
+            if not rotated:
+                self.key_manager.load(force=True)
+            if self.strict_security and self.key_manager.is_expired():
+                raise RuntimeError(
+                    "Key rotation failed and key is expired in strict security mode."
+                )
 
         metadata = self.make_message()
         if final_report:
@@ -499,7 +611,7 @@ class HbClient:
         json_bytes = json.dumps(metadata, allow_nan=False).encode("utf-8")
 
         # Binary Packing vs Cleartext Fallback
-        if self.key_manager.keys:
+        if self.key_manager.has_valid_send_keys():
             key_id = self.key_manager.keys["key_id"]
             aes_secret = base64.b64decode(self.key_manager.keys["aes_secret"])
             nonce = os.urandom(12)
@@ -515,11 +627,21 @@ class HbClient:
                 ">I", zlib.crc32(payload_without_crc) & 0xFFFFFFFF
             )
         else:
-            # Fallback to cleartext if keys are missing (fail-open)
+            if self.strict_security:
+                raise RuntimeError(
+                    "Strict security mode forbids plaintext heartbeat transmission "
+                    "without valid key material."
+                )
+            if self.key_manager.is_enrolled():
+                key_path = self.key_manager.get_key_file_path()
+                raise RuntimeError(
+                    f"Enrollment exists but key material is invalid at {key_path}; "
+                    "refusing plaintext fallback. Please re-login or delete the old keys."
+                )
+            # Legacy non-strict mode: allow bootstrap plaintext before enrollment.
             final_packet = json_bytes
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(None)  # Blocking send
+        sock = self._get_socket()
 
         def deliver_it() -> bool:
             was_sent = False
@@ -563,14 +685,36 @@ def cmd_login(args: "argparse.Namespace") -> None:
 
     Example:
         # On the CLI:
-        # nuclei-heartbeat-client --server-url https://hb.example.com:8333 login
+        # nhbclient --server-url https://hb.example.com:8333 login
         #
         # Visit https://hb.example.com/verify, enter ABCD-1234, wait for approval.
     """
+    def _detect_local_username() -> str:
+        # Prefer POSIX euid-root naming when available.
+        try:
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                return "root"
+        except OSError:
+            pass
+
+        for resolver in (
+            lambda: os.getlogin(),
+            lambda: getpass.getuser(),
+            lambda: os.environ.get("USER"),
+            lambda: os.environ.get("USERNAME"),
+        ):
+            try:
+                value = resolver()
+                if value:
+                    return str(value)
+            except Exception:
+                continue
+        return "None"
+
     server_url = args.server_url.rstrip("/")
     km = KeyManager(server_url)
     my_hostname = socket.getfqdn()
-    my_username = os.getlogin() if os.geteuid() > 0 else "root"
+    my_username = _detect_local_username()
     req = urllib.request.Request(
         f"{server_url}/api/auth/device/init/",
         data=json.dumps({"client_name": f"{my_username}@{my_hostname}"}).encode(),
@@ -636,7 +780,7 @@ def cmd_status(args: "argparse.Namespace") -> None:
         args: Parsed command-line namespace containing ``server_url``.
 
     Example:
-        # nuclei-heartbeat-client --server-url https://hb.example.com:8333 status
+        # nhbclient --server-url https://hb.example.com:8333 status
         # Server URL: https://hb.example.com:8333
         # Active Key ID: 42
         # Keys expire in: 12.3 days
@@ -675,8 +819,8 @@ def cmd_logout(args: "argparse.Namespace") -> None:
         SystemExit: If revocation fails and ``--force`` is not set.
 
     Example:
-        # nuclei-heartbeat-client --server-url https://hb.example.com:8333 logout
-        # nuclei-heartbeat-client --server-url https://hb.example.com:8333 logout --force
+        # nhbclient --server-url https://hb.example.com:8333 logout
+        # nhbclient --server-url https://hb.example.com:8333 logout --force
     """
     km = KeyManager(args.server_url)
     if not km.load():
@@ -799,16 +943,16 @@ def main() -> None:
 
     Examples:
         # Enroll
-        nuclei-heartbeat-client --server-url https://hb.example.com:8333 login
+        nhbclient --server-url https://hb.example.com:8333 login
 
         # Check enrollment
-        nuclei-heartbeat-client --server-url https://hb.example.com:8333 status
+        nhbclient --server-url https://hb.example.com:8333 status
 
         # Send a heartbeat
-        nuclei-heartbeat-client send --app my-app --task deploy --interval 60
+        nhbclient send --app my-app --task deploy --interval 60
 
         # Send with human-readable duration
-        nuclei-heartbeat-client send --app my-app --task deploy --interval 1h
+        nhbclient send --app my-app --task deploy --interval 1h
     """
     # Ensure output is unbuffered, like 'python -u'
     sys.stdout.reconfigure(write_through=True)  # type: ignore
@@ -876,7 +1020,7 @@ def main() -> None:
         type=str,
         help="Alert threshold in seconds or human durations e.g. 12h 6.25d 11w ...",
     )
-    p_send.add_argument("--port", "-p", type=str, help="App port (optional)")
+    p_send.add_argument("--port", "-p", type=int, help="App port (optional)")
     p_send.add_argument("--version", "-v", help="Version string for the app (optional)")
     p_send.add_argument(
         "--final-report",

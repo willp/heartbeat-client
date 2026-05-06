@@ -1,8 +1,10 @@
 """Tests for HbClient class."""
-import pytest
-import time
 import socket
-from unittest.mock import patch, MagicMock
+import time
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from nuclei_heartbeat_client.hbclient import HbClient, HbConfig
 
 

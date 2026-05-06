@@ -1,12 +1,22 @@
-# nuclei-heartbeat-client
+# nhbclient
 
 A secure, high-reliability heartbeat client for monitoring your systems
 using nuclei-heartbeat-backend and nuclei-heartbeat-watcher
 
+## Project Scope
+
+This repository contains only the Python client library and CLI for sending
+heartbeat packets and managing local enrollment keys.
+
+Related repositories:
+
+- `nuclei-heartbeat-backend`: API/authentication and key lifecycle services
+- `nuclei-heartbeat-watcher`: monitoring process that evaluates heartbeat data
+
 ## Installation
 
 ```bash
-pip install nuclei-heartbeat-client
+pip install nhbclient
 ```
 
 ## Quick Start
@@ -25,13 +35,13 @@ client.send(task="deployment-complete")
 
 ```bash
 # Enroll via OAuth
-nuclei-heartbeat-client --server-url https://hb.example.com:8333 login
+nhbclient --server-url https://hb.example.com:8333 login
 
 # Check enrollment status
-nuclei-heartbeat-client --server-url https://hb.example.com:8333 status
+nhbclient --server-url https://hb.example.com:8333 status
 
 # Send a heartbeat
-nuclei-heartbeat-client send --app my-service --task deploy --interval 60
+nhbclient send --app my-service --task deploy --interval 60
 ```
 
 ## Features
@@ -58,10 +68,16 @@ The `HbConfig` dataclass provides the following configurable options:
 | `ALERT_INTERVAL_MULTIPLIER_HIGH` | float | `1.25` | Alert threshold multiplier for intervals >= 1 day |
 | `DUPE_SEND_DELAY_SEC` | float \| None | `None` | Delay before duplicate send (clamped to 1.0-5.0s) |
 
-## CLI Reference
+### Security Mode
+
+The `HbClient` supports a `strict_security` parameter (default: `True`) to control the enforcement of security protocols.
+
+- **Strict Mode (`True`)**: Enforces mandatory encryption and authentication. The client will refuse to initialize if valid, enrolled keys are not found, or if a key is expired and cannot be refreshed. This prevents accidental transmission of unauthenticated or plaintext heartbeats in sensitive environments.
+- **Non-Strict Mode (`False`)**: Allows for a "bootstrap" phase. The client can operate without enrollment by sending plaintext JSON payloads, which is useful for initial setup before keys are provisioned.
+- **Note**: If an enrollment exists but the key material is corrupted or invalid, the client will refuse to fall back to plaintext even in non-strict mode to prevent an insecure state.
 
 ```
-nuclei-heartbeat-client [--server SERVER] [--serverport PORT] [--server-url URL] COMMAND
+nhbclient [--server SERVER] [--serverport PORT] [--server-url URL] COMMAND
 ```
 
 ### Global Options
@@ -77,7 +93,7 @@ nuclei-heartbeat-client [--server SERVER] [--serverport PORT] [--server-url URL]
 Enroll this device via OAuth Device Flow.
 
 ```
-nuclei-heartbeat-client login
+nhbclient login
 ```
 
 Prompts the user to visit a verification URL and enter a code, then polls for approval.
@@ -87,7 +103,7 @@ Prompts the user to visit a verification URL and enter a code, then polls for ap
 Show current key status (key ID, expiration).
 
 ```
-nuclei-heartbeat-client status
+nhbclient status
 ```
 
 #### logout
@@ -95,7 +111,7 @@ nuclei-heartbeat-client status
 Revoke credentials on the server and delete local key file.
 
 ```
-nuclei-heartbeat-client logout [--force]
+nhbclient logout [--force]
 ```
 
 Use `--force` to delete local keys even if the server is unreachable.
@@ -105,7 +121,7 @@ Use `--force` to delete local keys even if the server is unreachable.
 Send a heartbeat packet.
 
 ```
-nuclei-heartbeat-client send --app NAME --task TASK --interval DURATION [OPTIONS]
+nhbclient send --app NAME --task TASK --interval DURATION [OPTIONS]
 ```
 
 Required arguments:
@@ -126,11 +142,43 @@ Optional arguments:
 # Install development dependencies
 pip install -e ".[dev]"
 
+# Install optional static type-checking dependencies
+pip install -e ".[typecheck]"
+
+# Run lints and type checks
+ruff check .
+mypy src
+
 # Run tests
-pytest tests/
+pytest
 
 # Build distribution
 python -m build
+
+# Validate package metadata before uploading
+twine check dist/*
+```
+
+## Releasing (Commitizen)
+
+Versioning and tagging are managed with Commitizen.
+
+```bash
+# Install release tooling
+pip install -e ".[release]"
+
+# Ensure clean local environment
+rm -rf dist/ build/ *.egg-info
+
+# Bump version + create changelog entry + tag
+cz bump
+
+# Build and validate artifacts
+python -m build
+twine check dist/*
+
+# Upload release (trusted publishing or token-based)
+python -m twine upload dist/nhbclient-<version>*
 ```
 
 ## License

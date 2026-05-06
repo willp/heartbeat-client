@@ -1,5 +1,6 @@
 """Tests for parse_time_duration function."""
 import pytest
+
 from nuclei_heartbeat_client.hbclient import parse_time_duration
 
 

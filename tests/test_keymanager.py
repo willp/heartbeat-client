@@ -1,8 +1,9 @@
 """Tests for KeyManager class."""
 import json
 import os
-import time
 import stat
+import time
+
 from nuclei_heartbeat_client.hbclient import KeyManager
 
 
