@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate tag is SemVer
+        id: semver
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY' >> "${GITHUB_OUTPUT}"
+          import os, re
+          tag = os.environ["TAG"]
+          # SemVer core: MAJOR.MINOR.PATCH, optional prerelease (-...) and build metadata (+...).
+          # Allows an optional leading "v" (e.g., v1.2.3).
+          pattern = re.compile(
+              r"^(v)?"
+              r"(0|[1-9]\d*)\."
+              r"(0|[1-9]\d*)\."
+              r"(0|[1-9]\d*)"
+              r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+              r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+              r"$"
+          )
+          ok = bool(pattern.fullmatch(tag))
+          print(f"ok={str(ok).lower()}")
+          PY
+
+      - name: Build distributions
+        if: steps.semver.outputs.ok == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          rm -rf dist build *.egg-info src/*.egg-info
+          python -m build
+          twine check dist/*
+
+      - name: Publish package to PyPI
+        if: steps.semver.outputs.ok == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
