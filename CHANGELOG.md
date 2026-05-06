@@ -5,7 +5,8 @@
 - align package metadata and tooling with current PyPI/PEP 621 standards
 - add CI/release workflows with build and metadata verification
 
-### Docs
+### Refactor
+- rename CLI command from `nuclei-heartbeat-client` to `nhbclient`
 
 - add CONTRIBUTING, CODE_OF_CONDUCT, and SECURITY policies
 - clarify release process and Commitizen workflow in README
