@@ -9,13 +9,14 @@ import socket
 import struct
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 import zlib
 from dataclasses import dataclass
 from typing import Any, Dict
 
 from filelock import FileLock, Timeout
+
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -337,14 +338,14 @@ class HbClient:
         port: int | None = None,
         config: HbConfig | None = None,
         blocking: bool = True,
-        **kwargs,
+        servername: str | None = None,
+        serverport: int | None = None,
+        server_url: str | None = None,
     ):
         self.cfg = config or default_hb_config
-        self.servername = kwargs.get("servername", self.cfg.server)
-        self.serverport = kwargs.get("serverport", self.cfg.serverport)
-        self.server_url = kwargs.get(
-            "server_url", f"https://{self.servername}:{self.serverport}"
-        )
+        self.servername = servername or self.cfg.server
+        self.serverport = serverport or self.cfg.serverport
+        self.server_url = server_url or f"https://{self.servername}:{self.serverport}"
 
         self.blocking_delay: float = 0.1 if blocking else 0.0
         self.interval = interval
