@@ -270,6 +270,9 @@ class KeyManager:
         "thundering herd" problems where many clients try to rotate at the exact
         same moment when a global token expires.
 
+        Always returns True for already-expired keys to support recovery scenarios
+        where the server admin has manually extended expiration.
+
         Returns:
             True if immediate or near-term rotation is required; False otherwise.
 
@@ -280,6 +283,11 @@ class KeyManager:
         """
         if not self.keys:
             return False
+
+        # Always attempt rotation for expired keys - the server may have extended
+        # the expiration manually, and we want to give clients a chance to recover.
+        if self.is_expired():
+            return True
 
         expires_at_raw = self.keys.get("expires_at")
         if not isinstance(expires_at_raw, (int, float)):
@@ -326,6 +334,20 @@ class KeyManager:
             with lock:
                 with open(self.key_file, "r") as f:
                     current_keys = json.load(f)
+
+                # Double-check: another process may have rotated while we waited for the lock.
+                # Re-evaluate expiration using the freshly-read keys.
+                expires_at_raw = current_keys.get("expires_at")
+                if isinstance(expires_at_raw, (int, float)):
+                    expires_at = float(expires_at_raw)
+                    # Always proceed if keys are expired (server may have extended them)
+                    if time.time() < expires_at:
+                        jitter_seconds = random.uniform(7, 10) * 86400
+                        if time.time() <= (expires_at - jitter_seconds):
+                            # Keys were already refreshed by another process; no rotation needed.
+                            self.keys = current_keys
+                            self._last_mtime = os.stat(self.key_file).st_mtime
+                            return True
 
                 req = urllib.request.Request(
                     f"{self.server_url}/api/auth/token/rotate/",

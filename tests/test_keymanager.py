@@ -129,3 +129,20 @@ class TestKeyManagerNeedsRotation:
         km = KeyManager("https://hb.example.com")
         km.keys = {"last_rotated_at": int(time.time()) - 86400 * 60}
         assert km.needs_rotation() is True
+
+    def test_expired_keys_always_need_rotation(self, tmp_config_dir, monkeypatch):
+        """Expired keys should always trigger rotation to support recovery scenarios."""
+        _patch_config_path(monkeypatch, tmp_config_dir)
+        km = KeyManager("https://hb.example.com")
+        # Key expired 30 days ago
+        km.keys = {"expires_at": int(time.time()) - 86400 * 30}
+        assert km.is_expired() is True
+        assert km.needs_rotation() is True
+
+    def test_expired_keys_one_second_ago(self, tmp_config_dir, monkeypatch):
+        """Even freshly-expired keys should trigger rotation."""
+        _patch_config_path(monkeypatch, tmp_config_dir)
+        km = KeyManager("https://hb.example.com")
+        km.keys = {"expires_at": int(time.time()) - 1}
+        assert km.is_expired() is True
+        assert km.needs_rotation() is True
