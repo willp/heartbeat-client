@@ -45,11 +45,11 @@ release = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/willp/heartbeat-client"
-Repository = "https://github.com/willp/heartbeat-client"
+Homepage      = "https://github.com/willp/heartbeat-client"
+Repository    = "https://github.com/willp/heartbeat-client"
 Documentation = "https://github.com/willp/heartbeat-client/blob/main/README.md"
-Issues = "https://github.com/willp/heartbeat-client/issues"
-Changelog = "https://github.com/willp/heartbeat-client/blob/main/CHANGELOG.md"
+Issues        = "https://github.com/willp/heartbeat-client/issues"
+Changelog     = "https://github.com/willp/heartbeat-client/blob/main/CHANGELOG.md"
 
 [project.scripts]
 nhbclient = "nuclei_heartbeat_client.hbclient:main"

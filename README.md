@@ -16,7 +16,7 @@ Related repositories:
 ## Installation
 
 ```bash
-pip install nhbclient
+pip install nuclei-heartbeat-client
 ```
 
 ## Quick Start
@@ -52,6 +52,7 @@ nhbclient send --app my-service --task deploy --interval 60
 - **Deterministic key rotation** with jitter to prevent thundering herd
 - **Atomic file I/O** for crash-safe credential storage
 - **Human-readable duration parsing** (e.g., `6h`, `2.5d`, `3w`)
+- **Optional Cleartext Mode** using strict_security=False
 
 ## Configuration
 
@@ -178,7 +179,7 @@ python -m build
 twine check dist/*
 
 # Upload release (trusted publishing or token-based)
-python -m twine upload dist/nhbclient-<version>*
+python -m twine upload dist/nuclei-heartbeat-client-<version>*
 ```
 
 ## License
