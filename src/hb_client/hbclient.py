@@ -868,7 +868,7 @@ def cmd_renew(args: "argparse.Namespace") -> None:
     if km.rotate_optimistic():
         print(" done.")
         km.load(force=True)
-        print(f"✅ Keys renewed successfully!")
+        print("✅ Keys renewed successfully!")
         print(f"New Key ID: {km.keys.get('key_id')}")
         new_expires = km.keys.get("expires_at")
         if new_expires:
