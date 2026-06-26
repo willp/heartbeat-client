@@ -60,6 +60,7 @@ docs/_build/
 target/
 
 push_wheel.sh
+new_release_to_pypi.sh
 .mypy_cache
 .pytest_cache/
 .ruff_cache/
