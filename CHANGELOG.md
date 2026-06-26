@@ -1,3 +1,9 @@
+## 0.5.4 (2026-06-25)
+
+### Fix
+
+- repair PyPI release workflow build step
+
 ## 0.5.3 (2026-06-25)
 
 ## 0.5.2 (2026-06-25)
