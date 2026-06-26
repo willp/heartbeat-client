@@ -833,6 +833,57 @@ def cmd_status(args: "argparse.Namespace") -> None:
         print(f"Keys last rotated: {age:.1f} days ago")
 
 
+def cmd_renew(args: "argparse.Namespace") -> None:
+    """
+    Attempt to rotate keys to refresh credentials and avoid expiration.
+
+    This performs a proactive key rotation regardless of whether keys are
+    near expiration. Useful for:
+        - Manually refreshing keys before a planned network outage
+        - Testing that rotation works correctly
+        - Recovering from a near-expiration state
+
+    Args:
+        args: Parsed command-line namespace containing ``server_url``.
+
+    Raises:
+        SystemExit: If not enrolled or rotation fails.
+
+    Example:
+        # hbclient --server-url https://hb.example.com:8333 renew
+    """
+    km = KeyManager(args.server_url)
+    if not km.load():
+        print(f"Not enrolled. Run '{CLI_NAME} login' first.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Current Key ID: {km.keys.get('key_id')}")
+    expires_at = km.keys.get("expires_at")
+    if expires_at:
+        days_left = (expires_at - time.time()) / 86400
+        print(f"Current expiration: {days_left:.1f} days remaining")
+
+    print("Attempting key rotation...", end="", flush=True)
+
+    if km.rotate_optimistic():
+        print(" done.")
+        km.load(force=True)
+        print(f"✅ Keys renewed successfully!")
+        print(f"New Key ID: {km.keys.get('key_id')}")
+        new_expires = km.keys.get("expires_at")
+        if new_expires:
+            new_days = (new_expires - time.time()) / 86400
+            print(f"New expiration: {new_days:.1f} days remaining")
+    else:
+        print(" failed.")
+        print("❌ Key rotation failed.", file=sys.stderr)
+        print("This may be due to:", file=sys.stderr)
+        print("  - Server unreachable", file=sys.stderr)
+        print("  - Invalid or revoked access token", file=sys.stderr)
+        print("  - Another process currently rotating", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_logout(args: "argparse.Namespace") -> None:
     """
     Revoke credentials on the server and delete local key files.
@@ -963,6 +1014,8 @@ def main() -> None:
             Required: ``--server-url`` (HTTPS URL for key management).
         status: Show current key status (key ID, expiration).
             Required: ``--server-url``.
+        renew: Rotate keys to refresh credentials and avoid expiration.
+            Required: ``--server-url``.
         logout: Revoke keys on the server and delete local config.
             Optional: ``--force`` (delete local keys even if server is unreachable).
         send: Send a heartbeat packet.
@@ -980,6 +1033,9 @@ def main() -> None:
         # Check enrollment
         hbclient --server-url https://hb.example.com:8333 status
 
+        # Renew keys
+        hbclient --server-url https://hb.example.com:8333 renew
+
         # Send a heartbeat
         hbclient send --app my-app --task deploy --interval 60
 
@@ -991,7 +1047,7 @@ def main() -> None:
     sys.stderr.reconfigure(write_through=True)  # type: ignore
 
     # --- THE STRICT LEGACY INTERCEPTOR ---
-    known_commands = ["login", "send", "status", "logout", "-h", "--help", "help"]
+    known_commands = ["login", "send", "status", "logout", "renew", "-h", "--help", "help"]
 
     if (
         len(sys.argv) > 1
@@ -1025,6 +1081,7 @@ def main() -> None:
 
     subparsers.add_parser("login", help="Enroll this device via OAuth Device Flow")
     subparsers.add_parser("status", help="Show current key status")
+    subparsers.add_parser("renew", help="Rotate keys to refresh credentials and avoid expiration")
 
     p_logout = subparsers.add_parser("logout", help="Revoke keys and delete local config")
     p_logout.add_argument(
@@ -1069,6 +1126,8 @@ def main() -> None:
         cmd_login(args)
     elif args.command == "status":
         cmd_status(args)
+    elif args.command == "renew":
+        cmd_renew(args)
     elif args.command == "logout":
         cmd_logout(args)
     elif args.command == "send":
