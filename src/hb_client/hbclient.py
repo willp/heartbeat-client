@@ -23,7 +23,12 @@ from filelock import FileLock, Timeout
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
+CLI_NAME = "hbclient"
+CONFIG_DIR_NAME = "hbclient"
+
 __all__ = [
+    "CLI_NAME",
+    "CONFIG_DIR_NAME",
     "HbClient",
     "HbConfig",
     "KeyManager",
@@ -31,13 +36,13 @@ __all__ = [
 ]
 
 """
-nhbclient — Secure Heartbeat Client Library
+hbclient — Secure Heartbeat Client Library
 ==========================================================
 
 A secure, high-reliability heartbeat client designed to send encrypted status
 updates to a central Nuclei monitoring server.
 
-PyPI: https://pypi.org/project/nuclei-heartbeat-client
+PyPI: https://pypi.org/project/hb-client
 
 Key Features:
     - **Security**: AES-GCM encryption for UDP packets with CRC32 integrity checks.
@@ -48,17 +53,17 @@ Key Features:
       to credential files.
 
 Installation:
-    pip install nhbclient
+    pip install hb-client
 
 Usage:
-    from nuclei_heartbeat_client import HbClient, HbConfig
+    from hb_client import HbClient, HbConfig
 
     config = HbConfig(server="hb.example.com", serverport=8333)
     client = HbClient(name="my-app", interval=60, config=config)
     client.send(task="startup")
 
     # CLI usage
-    # nhbclient send --app my-app --task deploy --interval 60
+    # hbclient send --app my-app --task deploy --interval 60
 """
 
 try:
@@ -129,38 +134,37 @@ class KeyManager:
             server_url (str): The base HTTPS URL of the server used for OAuth
                               token endpoints (e.g., https://hb.example.com).
         """
-        self.config_dir = self._resolve_config_dir()
+        self.config_dir = self._config_dir()
         self.key_file = os.path.join(self.config_dir, "keys.json")
         self.server_url = server_url.rstrip("/")
         self.keys: Dict[str, Any] = {}
         self._last_mtime: float = 0.0
 
-        # Create dir and explicitly lock it down to owner-only (drwx------)
-        os.makedirs(self.config_dir, exist_ok=True)
-        os.chmod(self.config_dir, 0o700)
+        if os.path.isdir(self.config_dir):
+            os.chmod(self.config_dir, 0o700)
 
     @staticmethod
-    def _resolve_config_dir() -> str:
-        """Resolve a config directory across XDG and native OS defaults."""
+    def _config_dir() -> str:
+        """Return the config directory for keys.json."""
         xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
         if xdg_config_home:
-            return str(Path(xdg_config_home).expanduser() / "hbclient")
+            return str(Path(xdg_config_home).expanduser() / CONFIG_DIR_NAME)
 
-        # Linux/Unix fallback requested by project policy.
-        posix_fallback = Path(os.path.expanduser("~/.config/hbclient"))
+        posix_path = Path(os.path.expanduser(f"~/.config/{CONFIG_DIR_NAME}"))
         with suppress(OSError):
-            posix_fallback.parent.mkdir(parents=True, exist_ok=True)
-            return str(posix_fallback)
+            posix_path.parent.mkdir(parents=True, exist_ok=True)
+            return str(posix_path)
 
-        # Native platform fallback as a last resort.
         if os.name == "nt":
             appdata = os.environ.get("APPDATA")
             if appdata:
-                return str(Path(appdata) / "hbclient")
-            return str(Path.home() / "AppData" / "Roaming" / "hbclient")
+                return str(Path(appdata) / CONFIG_DIR_NAME)
+            return str(Path.home() / "AppData" / "Roaming" / CONFIG_DIR_NAME)
         if sys.platform == "darwin":
-            return str(Path.home() / "Library" / "Application Support" / "hbclient")
-        return str(Path.home() / ".config" / "hbclient")
+            return str(
+                Path.home() / "Library" / "Application Support" / CONFIG_DIR_NAME
+            )
+        return str(Path.home() / ".config" / CONFIG_DIR_NAME)
 
     def load(self, force: bool = False) -> bool:
         """
@@ -207,7 +211,11 @@ class KeyManager:
         Raises:
             OSError: If the system fails to create or write to the temporary file.
         """
-        tmp_file = self.key_file + ".tmp"
+        write_dir = self._config_dir()
+        os.makedirs(write_dir, exist_ok=True)
+        os.chmod(write_dir, 0o700)
+        write_key_file = os.path.join(write_dir, "keys.json")
+        tmp_file = write_key_file + ".tmp"
 
         # Bypass default umask: force file creation with strict owner-only read/write
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
@@ -220,7 +228,9 @@ class KeyManager:
             os.fsync(f.fileno())
 
         # Atomic replace preserves the strict permissions of the tmp file
-        os.replace(tmp_file, self.key_file)
+        os.replace(tmp_file, write_key_file)
+        self.config_dir = write_dir
+        self.key_file = write_key_file
         self._last_mtime = os.stat(self.key_file).st_mtime
 
     def is_enrolled(self) -> bool:
@@ -381,7 +391,7 @@ class HbClient:
         key_manager: Instance handling credential loading and rotation.
 
     Example:
-        >>> from nuclei_heartbeat_client import HbClient, HbConfig
+        >>> from hb_client import HbClient, HbConfig
         >>> config = HbConfig(server="hb.example.com")
         >>> client = HbClient(name="my-app", interval=60, config=config)
         >>> client.send(task="deployment")  # Returns True on success
@@ -442,7 +452,7 @@ class HbClient:
             if self.strict_security:
                 raise RuntimeError(
                     "Strict security mode requires enrolled valid keys. "
-                    "Run 'nhbclient login' first."
+                    f"Run '{CLI_NAME} login' first."
                 )
             return
 
@@ -685,7 +695,7 @@ def cmd_login(args: "argparse.Namespace") -> None:
 
     Example:
         # On the CLI:
-        # nhbclient --server-url https://hb.example.com:8333 login
+        # hbclient --server-url https://hb.example.com:8333 login
         #
         # Visit https://hb.example.com/verify, enter ABCD-1234, wait for approval.
     """
@@ -780,14 +790,14 @@ def cmd_status(args: "argparse.Namespace") -> None:
         args: Parsed command-line namespace containing ``server_url``.
 
     Example:
-        # nhbclient --server-url https://hb.example.com:8333 status
+        # hbclient --server-url https://hb.example.com:8333 status
         # Server URL: https://hb.example.com:8333
         # Active Key ID: 42
         # Keys expire in: 12.3 days
     """
     km = KeyManager(args.server_url)
     if not km.load():
-        print("Not enrolled. Run 'hbclient login' first.")
+        print(f"Not enrolled. Run '{CLI_NAME} login' first.")
         return
     print(f"Server URL: {args.server_url}")
     print(f"Active Key ID: {km.keys.get('key_id')}")
@@ -819,8 +829,8 @@ def cmd_logout(args: "argparse.Namespace") -> None:
         SystemExit: If revocation fails and ``--force`` is not set.
 
     Example:
-        # nhbclient --server-url https://hb.example.com:8333 logout
-        # nhbclient --server-url https://hb.example.com:8333 logout --force
+        # hbclient --server-url https://hb.example.com:8333 logout
+        # hbclient --server-url https://hb.example.com:8333 logout --force
     """
     km = KeyManager(args.server_url)
     if not km.load():
@@ -943,16 +953,16 @@ def main() -> None:
 
     Examples:
         # Enroll
-        nhbclient --server-url https://hb.example.com:8333 login
+        hbclient --server-url https://hb.example.com:8333 login
 
         # Check enrollment
-        nhbclient --server-url https://hb.example.com:8333 status
+        hbclient --server-url https://hb.example.com:8333 status
 
         # Send a heartbeat
-        nhbclient send --app my-app --task deploy --interval 60
+        hbclient send --app my-app --task deploy --interval 60
 
         # Send with human-readable duration
-        nhbclient send --app my-app --task deploy --interval 1h
+        hbclient send --app my-app --task deploy --interval 1h
     """
     # Ensure output is unbuffered, like 'python -u'
     sys.stdout.reconfigure(write_through=True)  # type: ignore

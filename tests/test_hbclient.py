@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nuclei_heartbeat_client.hbclient import HbClient, HbConfig
+from hb_client.hbclient import HbClient, HbConfig
 
 
 class TestHbClientInit:

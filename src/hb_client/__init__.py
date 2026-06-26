@@ -1,6 +1,8 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from .hbclient import (
+    CLI_NAME,
+    CONFIG_DIR_NAME,
     HbClient,
     HbConfig,
     KeyManager,
@@ -16,6 +18,8 @@ except PackageNotFoundError:
     __version__ = "unknown"
 
 __all__ = [
+    "CLI_NAME",
+    "CONFIG_DIR_NAME",
     "HbClient",
     "HbConfig",
     "KeyManager",

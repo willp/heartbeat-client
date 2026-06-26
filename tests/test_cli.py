@@ -6,7 +6,14 @@ from unittest.mock import patch
 
 import pytest
 
-from nuclei_heartbeat_client.hbclient import cmd_login, cmd_logout, cmd_status, main
+from hb_client.hbclient import (
+    CLI_NAME,
+    CONFIG_DIR_NAME,
+    cmd_login,
+    cmd_logout,
+    cmd_status,
+    main,
+)
 
 
 class TestCmdLogin:
@@ -26,7 +33,10 @@ class TestCmdStatus:
 
     def test_status_no_keys_prints_not_enrolled(self, capsys, tmp_config_dir, monkeypatch):
         """Test status prints 'Not enrolled' when no keys."""
-        monkeypatch.setattr("os.path.expanduser", lambda x: str(tmp_config_dir) if x == "~/.config/hbclient" else x)
+        monkeypatch.setattr(
+            "os.path.expanduser",
+            lambda x: str(tmp_config_dir) if x == f"~/.config/{CONFIG_DIR_NAME}" else x,
+        )
         args = Namespace(server_url="https://hb.example.com")
         cmd_status(args)
         captured = capsys.readouterr()
@@ -38,7 +48,10 @@ class TestCmdLogout:
 
     def test_logout_no_keys_prints_not_enrolled(self, capsys, tmp_config_dir, monkeypatch):
         """Test logout prints 'No active session' when no keys."""
-        monkeypatch.setattr("os.path.expanduser", lambda x: str(tmp_config_dir) if x == "~/.config/hbclient" else x)
+        monkeypatch.setattr(
+            "os.path.expanduser",
+            lambda x: str(tmp_config_dir) if x == f"~/.config/{CONFIG_DIR_NAME}" else x,
+        )
         args = Namespace(server_url="https://hb.example.com", force=False)
         cmd_logout(args)
         captured = capsys.readouterr()
@@ -50,21 +63,21 @@ class TestMainCLI:
 
     def test_main_unknown_command_without_task_flag(self):
         """Test main with unknown command."""
-        with patch.object(sys, "argv", ["nhbclient", "unknown"]):
+        with patch.object(sys, "argv", [CLI_NAME, "unknown"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code != 0  # Unknown command should fail
 
     def test_main_send_requires_app_and_task(self):
         """Test main with send command requiring app and task."""
-        with patch.object(sys, "argv", ["nhbclient", "send"]):
+        with patch.object(sys, "argv", [CLI_NAME, "send"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code != 0
 
     def test_main_help_flag(self):
         """Test main with --help."""
-        with patch.object(sys, "argv", ["nhbclient", "--help"]):
+        with patch.object(sys, "argv", [CLI_NAME, "--help"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             # --help exits with 0

@@ -2,6 +2,10 @@ from unittest.mock import patch
 
 import pytest
 
+from hb_client.hbclient import CONFIG_DIR_NAME
+
+DEFAULT_CONFIG_PATH = f"~/.config/{CONFIG_DIR_NAME}"
+
 
 @pytest.fixture(autouse=True)
 def mock_default_dns():
@@ -16,7 +20,7 @@ def default_enrolled_keys(tmp_path, monkeypatch):
     import json
     import time
 
-    config_dir = tmp_path / "hbclient-default"
+    config_dir = tmp_path / f"{CONFIG_DIR_NAME}-default"
     config_dir.mkdir(mode=0o700, exist_ok=True)
     key_file = config_dir / "keys.json"
     key_file.write_text(
@@ -33,7 +37,7 @@ def default_enrolled_keys(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "os.path.expanduser",
-        lambda x: str(config_dir) if x == "~/.config/hbclient" else x,
+        lambda x: str(config_dir) if x == DEFAULT_CONFIG_PATH else x,
     )
     yield
 
@@ -41,9 +45,12 @@ def default_enrolled_keys(tmp_path, monkeypatch):
 @pytest.fixture
 def tmp_config_dir(tmp_path, monkeypatch):
     """Temporary config directory for testing."""
-    config_dir = tmp_path / "hbclient"
+    config_dir = tmp_path / CONFIG_DIR_NAME
     config_dir.mkdir(mode=0o700)
-    monkeypatch.setattr("os.path.expanduser", lambda x: str(config_dir) if x == "~/.config/hbclient" else x)
+    monkeypatch.setattr(
+        "os.path.expanduser",
+        lambda x: str(config_dir) if x == DEFAULT_CONFIG_PATH else x,
+    )
     yield config_dir
     # Cleanup handled by tmp_path
 

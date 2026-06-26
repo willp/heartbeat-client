@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve `nhbclient`.
+Thanks for helping improve `hb-client`.
 
 ## Development Setup
 

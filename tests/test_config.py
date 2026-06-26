@@ -1,5 +1,5 @@
 """Tests for HbConfig dataclass."""
-from nuclei_heartbeat_client.hbclient import HbConfig
+from hb_client.hbclient import HbConfig
 
 
 class TestHbConfigDefaults:
