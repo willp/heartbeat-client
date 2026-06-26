@@ -1,3 +1,11 @@
+## 0.5.1 (2026-06-25)
+
+### Fix
+
+- Package renamed to `hb-client` (from `nuclei-heartbeat-client`)
+- CLI command renamed to `hbclient`
+- Added license classifier to pyproject.toml
+
 ## 0.5.0 (2026-05-06)
 
 ## 0.4.0 (2026-05-05)
